@@ -1,0 +1,11 @@
+{
+  "name": "vischer-to-figma",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node generate.js"
+  },
+  "dependencies": {
+    "puppeteer": "^21.0.0"
+  }
+}

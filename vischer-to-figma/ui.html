@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, 'Inter', sans-serif;
+    background: #1e1e1e;
+    color: #e0e0e0;
+    padding: 24px;
+    font-size: 13px;
+  }
+  h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    color: #888;
+    margin-bottom: 20px;
+    font-size: 12px;
+  }
+  .status-box {
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 16px;
+    min-height: 48px;
+  }
+  .status-box p { color: #ccc; line-height: 1.6; }
+  .page-list {
+    list-style: none;
+    margin-bottom: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .page-list li {
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+  }
+  .page-list li .icon { font-size: 14px; width: 18px; text-align: center; }
+  .page-list li .lbl  { flex: 1; color: #ccc; }
+  .page-list li .dim  { color: #555; font-size: 11px; }
+  .page-list li.done  { border-color: #2d6a2d; }
+  .page-list li.done .lbl { color: #6bcf6b; }
+  .page-list li.err   { border-color: #6a2d2d; }
+  .page-list li.err .lbl  { color: #cf6b6b; }
+  .page-list li.active { border-color: #2d4f6a; }
+  .page-list li.active .lbl { color: #6baecf; }
+
+  .btn {
+    width: 100%;
+    padding: 11px;
+    border-radius: 7px;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    transition: opacity .15s;
+  }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-primary { background: #18a0fb; color: #fff; }
+  .btn-primary:not(:disabled):hover { opacity: .88; }
+  .btn-secondary { background: #3a3a3a; color: #ccc; margin-top: 8px; }
+  .btn-secondary:hover { background: #444; }
+
+  .progress-bar-wrap {
+    background: #3a3a3a;
+    border-radius: 4px;
+    height: 4px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    background: #18a0fb;
+    width: 0%;
+    transition: width .3s;
+    border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+
+<h2>Vischer Pages Importer</h2>
+<p class="subtitle">Importiert 9 Seiten von vischer.com als Figma-Frames</p>
+
+<div class="status-box">
+  <p id="statusText">Verbinde mit lokalem Server (localhost:3456) …</p>
+</div>
+
+<div class="progress-bar-wrap">
+  <div class="progress-bar" id="progressBar"></div>
+</div>
+
+<ul class="page-list" id="pageList"></ul>
+
+<button class="btn btn-primary" id="importBtn" disabled>Import starten</button>
+<button class="btn btn-secondary" id="closeBtn">Schliessen</button>
+
+<script>
+const SERVER = 'http://localhost:3456';
+let manifest = [];
+
+const statusEl   = document.getElementById('statusText');
+const listEl     = document.getElementById('pageList');
+const importBtn  = document.getElementById('importBtn');
+const closeBtn   = document.getElementById('closeBtn');
+const progressEl = document.getElementById('progressBar');
+
+closeBtn.addEventListener('click', () => parent.postMessage({ pluginMessage: { type: 'close' } }, '*'));
+
+// ── 1. Manifest laden ─────────────────────────────────────────────────────────
+async function loadManifest() {
+  try {
+    const res = await fetch(`${SERVER}/manifest.json`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    manifest = await res.json();
+
+    statusEl.textContent = `✓ ${manifest.length} Seiten gefunden. Klicke "Import starten".`;
+    importBtn.disabled = false;
+
+    listEl.innerHTML = '';
+    manifest.forEach(p => {
+      const li = document.createElement('li');
+      li.id = `page-${p.slug}`;
+      li.innerHTML = `
+        <span class="icon">○</span>
+        <span class="lbl">${p.name}</span>
+        <span class="dim">${p.width}×${p.height}</span>
+      `;
+      listEl.appendChild(li);
+    });
+  } catch (err) {
+    statusEl.innerHTML = `
+      ⚠️ Server nicht erreichbar.<br>
+      <br>
+      Bitte zuerst ausführen:<br>
+      <code style="background:#333;padding:2px 6px;border-radius:3px;font-size:11px">cd vischer-to-figma && npm install && node generate.js</code>
+    `;
+  }
+}
+
+loadManifest();
+
+// ── 2. Import ─────────────────────────────────────────────────────────────────
+importBtn.addEventListener('click', async () => {
+  importBtn.disabled = true;
+  statusEl.textContent = 'Lade Bilder …';
+
+  const pages = [];
+  let done = 0;
+
+  for (const p of manifest) {
+    const li = document.getElementById(`page-${p.slug}`);
+    if (li) {
+      li.className = 'active';
+      li.querySelector('.icon').textContent = '⋯';
+    }
+
+    try {
+      const res  = await fetch(`${SERVER}/${p.slug}.jpg`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob   = await res.blob();
+      const base64 = await blobToBase64(blob);
+
+      pages.push({ name: p.name, slug: p.slug, width: p.width, height: p.height, imageBase64: base64 });
+
+      if (li) {
+        li.className = 'done';
+        li.querySelector('.icon').textContent = '✓';
+      }
+    } catch (err) {
+      if (li) {
+        li.className = 'err';
+        li.querySelector('.icon').textContent = '✗';
+      }
+    }
+
+    done++;
+    progressEl.style.width = `${(done / manifest.length) * 50}%`;
+    statusEl.textContent = `Lade Bilder … ${done}/${manifest.length}`;
+  }
+
+  statusEl.textContent = 'Erstelle Figma-Frames …';
+  parent.postMessage({ pluginMessage: { type: 'import', pages } }, '*');
+});
+
+// ── Plugin-Nachrichten ────────────────────────────────────────────────────────
+window.onmessage = (event) => {
+  const msg = event.data.pluginMessage;
+  if (!msg) return;
+
+  if (msg.type === 'progress') {
+    const done = document.querySelectorAll('li.done').length;
+    progressEl.style.width = `${50 + (done / manifest.length) * 50}%`;
+    statusEl.textContent = `Frame erstellt: ${msg.name}`;
+  }
+
+  if (msg.type === 'error') {
+    const li = document.getElementById(`page-${msg.name}`);
+    if (li) { li.className = 'err'; li.querySelector('.icon').textContent = '✗'; }
+  }
+
+  if (msg.type === 'done') {
+    progressEl.style.width = '100%';
+    statusEl.textContent = `✅ Alle Seiten importiert! Datei speichern mit Cmd/Ctrl+S.`;
+    importBtn.disabled = false;
+    importBtn.textContent = 'Nochmal importieren';
+  }
+};
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+</script>
+</body>
+</html>
